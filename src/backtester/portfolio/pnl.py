@@ -1,0 +1,128 @@
+from typing import Dict
+from backtester.events.types import FillEvent, SignalDirection
+from backtester.instruments.base import Instrument, Decomposable
+from backtester.portfolio.margin import MarginModel, EquityMarginModel
+
+class AccountModel:
+    def __init__(self, initial_cash: float, instrument_registry: Dict[str, Instrument], margin_model: MarginModel = EquityMarginModel()):
+        self.available_cash = initial_cash
+        self.total_equity = initial_cash
+        self.initial_margin_req = 0.0
+        self.maintenance_margin_req = 0.0
+        self.margin_model = margin_model
+        
+        self.positions: Dict[str, float] = {}  # symbol -> qty
+        self.cost_basis: Dict[str, float] = {} # symbol -> avg entry price
+        self.instrument_registry = instrument_registry
+        
+        self.realized_pnl = 0.0
+        self.total_commission = 0.0
+        
+        self.current_prices: Dict[str, float] = {}
+        self.equity_curve = []
+
+    def update_market_price(self, symbol: str, price: float) -> None:
+        self.current_prices[symbol] = price
+        self._recalculate_account()
+
+    def on_fill(self, fill: FillEvent) -> None:
+        symbol = fill.symbol
+        qty = fill.quantity if fill.direction == SignalDirection.LONG else -fill.quantity
+        price = fill.fill_price
+        
+        self.total_commission += fill.commission
+        self.available_cash -= fill.commission
+
+        instrument = self.instrument_registry.get(symbol)
+        
+        if isinstance(instrument, Decomposable):
+            self.available_cash -= qty * price # Deduct synthetic cash
+            legs = instrument.decompose(qty)
+            
+            for i, (leg_sym, leg_qty) in enumerate(legs.items()):
+                # Assign the entire synthetic cost basis to the first leg for MVP simplicity
+                leg_price = price if i == 0 else 0.0
+                leg_instrument = self.instrument_registry.get(leg_sym)
+                self._update_position(leg_sym, leg_qty, leg_price, leg_instrument)
+                
+            self._recalculate_account()
+            return
+            
+        # Basic cash accounting for non-decomposable
+        self.available_cash -= qty * price
+        self._update_position(symbol, qty, price, instrument)
+        self._recalculate_account()
+
+    def _update_position(self, symbol: str, qty: float, price: float, instrument: Instrument | None) -> None:
+        current_qty = self.positions.get(symbol, 0.0)
+        current_cb = self.cost_basis.get(symbol, 0.0)
+        
+        if current_qty == 0:
+            # Open new
+            self.positions[symbol] = qty
+            self.cost_basis[symbol] = price
+        elif (current_qty > 0 and qty > 0) or (current_qty < 0 and qty < 0):
+            # Adding to position
+            new_qty = current_qty + qty
+            # Volume weighted average price
+            new_cb = ((current_cb * current_qty) + (price * qty)) / new_qty
+            self.positions[symbol] = new_qty
+            self.cost_basis[symbol] = new_cb
+        else:
+            # Closing or flipping
+            close_qty = min(abs(current_qty), abs(qty)) * (1 if current_qty < 0 else -1)
+            remaining_qty = current_qty + qty
+            
+            # Calculate realized PnL
+            price_diff = price - current_cb if current_qty > 0 else current_cb - price
+            if instrument:
+                realized = instrument.pnl_scalar(price_diff) * abs(close_qty)
+            else:
+                realized = price_diff * abs(close_qty) # Fallback to raw price 
+            
+            self.realized_pnl += realized
+            
+            # Position flips?
+            if (current_qty > 0 and remaining_qty < 0) or (current_qty < 0 and remaining_qty > 0):
+                self.positions[symbol] = remaining_qty
+                self.cost_basis[symbol] = price # Cost basis is the flip price
+            else:
+                self.positions[symbol] = remaining_qty
+                if remaining_qty == 0:
+                    self.cost_basis.pop(symbol, None)
+
+    def _recalculate_account(self) -> None:
+        unrealized_pnl = 0.0
+        im_req = 0.0
+        mm_req = 0.0
+        
+        for symbol, qty in self.positions.items():
+            price = self.current_prices.get(symbol, 0.0)
+            instrument = self.instrument_registry.get(symbol)
+            if instrument:
+                # PnL
+                cb = self.cost_basis.get(symbol, price)
+                price_diff = price - cb if qty > 0 else cb - price
+                unrealized_pnl += instrument.pnl_scalar(price_diff) * abs(qty)
+                
+                # Margin
+                im_req += self.margin_model.get_initial_margin(symbol, qty, price, instrument)
+                mm_req += self.margin_model.get_maintenance_margin(symbol, qty, price, instrument)
+
+        # In a real system with futures, available cash doesn't necessarily track total equity 1:1,
+        # but for this MVP, Total Equity = Cash Balance + Unrealized PnL
+        # where Cash Balance = Initial Deposit - Commissions + Realized PnL - (qty*price for equities)
+        
+        # Actually, for equities: Total Equity = Cash + Position Value
+        # But we've been subtracting qty*price from cash.
+        # Let's keep it simple:
+        portfolio_value = self.available_cash
+        for symbol, qty in self.positions.items():
+            price = self.current_prices.get(symbol, 0.0)
+            portfolio_value += qty * price # Standard equity model
+
+        self.total_equity = portfolio_value
+        self.initial_margin_req = im_req
+        self.maintenance_margin_req = mm_req
+        
+        self.equity_curve.append(self.total_equity)

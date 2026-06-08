@@ -1,0 +1,112 @@
+from backtester.core.clock import SimulationClock
+from backtester.events.queue import AbstractEventQueue, SyncEventQueue
+from backtester.events.types import BaseEvent, EventType, OrderEvent
+from backtester.sizing.base import AbstractCapitalAllocator
+from backtester.risk.pre_trade import PreTradeRiskEngine
+from backtester.risk.post_trade import PostTradeRiskEngine, PostTradeAction
+from backtester.portfolio.pnl import AccountModel
+from backtester.execution.engine import OrderBookMatcher
+from backtester.core.recorder import EventSerializer
+from backtester.core.config import BacktestConfig
+from backtester.portfolio.lifecycle import LifecycleHandler
+
+class BacktestEngine:
+    def __init__(self, config: BacktestConfig = BacktestConfig()):
+        self.config = config
+        self.clock = SimulationClock()
+        self.queue: AbstractEventQueue = SyncEventQueue()
+        
+        self.data_feed = None
+        self.strategy = None
+        self.portfolio: AccountModel | None = None
+        self.execution: OrderBookMatcher | None = None
+        self.recorder = EventSerializer()
+        self.lifecycle_handler: LifecycleHandler | None = None
+        
+        self.allocator: AbstractCapitalAllocator | None = None
+        self.pre_trade_risk: PreTradeRiskEngine | None = None
+        self.post_trade_risk: PostTradeRiskEngine | None = None
+
+    def set_feed(self, feed) -> None:
+        self.data_feed = feed
+
+    def set_strategy(self, strategy) -> None:
+        self.strategy = strategy
+
+    def set_portfolio(self, portfolio: AccountModel) -> None:
+        self.portfolio = portfolio
+        self.lifecycle_handler = LifecycleHandler(portfolio)
+
+    def set_execution(self, execution: OrderBookMatcher) -> None:
+        self.execution = execution
+        
+    def set_allocator(self, allocator: AbstractCapitalAllocator) -> None:
+        self.allocator = allocator
+        
+    def set_pre_trade_risk(self, pre_trade_risk: PreTradeRiskEngine) -> None:
+        self.pre_trade_risk = pre_trade_risk
+        
+    def set_post_trade_risk(self, post_trade_risk: PostTradeRiskEngine) -> None:
+        self.post_trade_risk = post_trade_risk
+
+    def run(self) -> None:
+        if not all([self.data_feed, self.strategy, self.portfolio, self.execution, self.allocator]):
+            raise ValueError("Must set feed, strategy, portfolio, execution, and allocator before running.")
+
+        while True:
+            # 1. Pump data feed if queue is empty
+            if self.queue.empty():
+                bar = self.data_feed.next()
+                if bar is None:
+                    break # End of backtest
+                self.queue.put(bar)
+
+            # 2. Process next event
+            event = self.queue.get()
+            self._process_event(event)
+
+    def _process_event(self, event: BaseEvent) -> None:
+        self.recorder.log_event(event)
+        
+        # Advance simulation time safely
+        self.clock.advance(event.timestamp)
+
+        if event.event_type == EventType.BAR:
+            # Update execution engine to know latest prices for fills
+            self.execution.update_market_bar(event, self.queue)
+            # Update portfolio state to current price
+            self.portfolio.update_market_price(event.symbol, event.close)
+            
+            # Pass to strategy
+            self.strategy.on_bar(event, self.queue)
+            
+        elif event.event_type == EventType.SIGNAL:
+            # Route to allocator
+            order = self.allocator.allocate(event, self.portfolio)
+            if order:
+                # Pre-trade risk check
+                if self.pre_trade_risk is None or self.pre_trade_risk.validate(order, self.portfolio):
+                    self.queue.put(order)
+
+        elif event.event_type == EventType.ORDER:
+            # Send to execution
+            self.execution.on_order(event, self.queue)
+
+        elif event.event_type == EventType.FILL:
+            # Send to portfolio
+            self.portfolio.on_fill(event)
+            
+            # Post-trade risk check
+            if self.post_trade_risk:
+                decision = self.post_trade_risk.check(self.portfolio)
+                if decision.action == PostTradeAction.FLATTEN_ALL:
+                    print(f"Risk Breach: {decision.reason} - Flattening all positions.")
+                    # Simplified flattening: in real engine, would inject flattening orders
+                    self.portfolio.positions.clear()
+                    self.portfolio.available_cash = self.portfolio.equity_curve[-1]
+                elif decision.action == PostTradeAction.HALT_TRADING:
+                    raise RuntimeError(f"Risk Breach: {decision.reason} - Trading Halted.")
+                    
+        elif event.event_type == EventType.LIFECYCLE:
+            if self.lifecycle_handler:
+                self.lifecycle_handler.process_lifecycle_event(event)

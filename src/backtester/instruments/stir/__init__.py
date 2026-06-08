@@ -1,0 +1,1 @@
+"""STIR Instruments Package"""
