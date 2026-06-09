@@ -75,7 +75,7 @@ class OrderBookMatcher:
         state.filled_quantity += fill_qty
         if state.filled_quantity >= order.quantity:
             state.status = OrderStatus.FILLED
-            self.oms.cancel_order(order.event_id) # Removes from active, places in closed
+            self.oms.close_order(order.event_id) # Preserves FILLED status
         else:
             state.status = OrderStatus.PARTIAL
 

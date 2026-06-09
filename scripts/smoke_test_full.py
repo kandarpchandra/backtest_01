@@ -62,8 +62,8 @@ def main():
         "MSFT": Equity("MSFT")
     }
     
-    feed_aapl = SyntheticFeed("AAPL", start_price=150.0, n_bars=200, dt=1.0)
-    feed_msft = SyntheticFeed("MSFT", start_price=300.0, n_bars=200, dt=1.0)
+    feed_aapl = SyntheticFeed("AAPL", start_price=150.0, n_bars=200, dt=1.0, seed=42)
+    feed_msft = SyntheticFeed("MSFT", start_price=300.0, n_bars=200, dt=1.0, seed=99)
     feed = MultiSymbolSynchronizer([feed_aapl, feed_msft])
     
     strategy = WarmupWrapper(MovingAverageCrossover(), warmup_bars=25)

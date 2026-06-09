@@ -3,11 +3,12 @@ from enum import Enum, auto
 import uuid
 
 class EventType(Enum):
-    BAR = auto()
-    SIGNAL = auto()
-    ORDER = auto()
-    FILL = auto()
-    LIFECYCLE = auto()
+    """Explicit priority values. Lower = processed first at the same timestamp."""
+    BAR = 10
+    SIGNAL = 20
+    ORDER = 30
+    FILL = 40
+    LIFECYCLE = 50
 
 @dataclass(frozen=True, kw_only=True)
 class BaseEvent:

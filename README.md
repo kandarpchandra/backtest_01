@@ -1,114 +1,124 @@
-# Event-Driven Backtesting Engine
+# Universal Event-Driven Backtesting Engine
 
-A professional-grade, event-driven backtesting engine built in Python. This engine simulates institutional trading environments by processing market data, strategies, risk checks, and portfolio accounting tick-by-tick to prevent look-ahead bias and ensure production-readiness.
+A production-grade, event-driven backtesting engine built in Python. This engine simulates institutional trading environments by processing market data, strategies, risk checks, and portfolio accounting tick-by-tick. It supports **Equities, Futures (STIR), Options (Black-Scholes), and Bonds** in a single unified simulation with full deterministic replay.
+
+## Key Features
+
+- **Event-Driven Architecture** — No look-ahead bias. The strategy cannot see the future.
+- **Multi-Asset Synchronization** — Trade AAPL, MSFT, SONIA futures, and Options simultaneously.
+- **Synthetic Leg Decomposition** — Buy a Butterfly, exit as individual legs. Real clearinghouse netting.
+- **Black-Scholes Options Pricing** — Dynamic mark-to-market using implied volatility.
+- **Lifecycle Event Bus** — Automatic option expiry settlement and bond coupon payments.
+- **Partial Fills & Queue Position** — Orders fill up to 10% of bar volume. Realistic microstructure.
+- **Deterministic Replay** — Every event serialized to Parquet for exact debugging.
+- **Per-Symbol Warmup** — Strategy indicators hydrate independently per symbol before live trading.
+
+---
 
 ## Architecture Overview
 
-The engine operates on a strict **Event Queue**. Components communicate by generating and consuming immutable `Event` objects in the following priority order:
-1. `BarEvent` -> Market data updates.
-2. `SignalEvent` -> Strategy generates alpha (Long/Short/Flat).
-3. `OrderEvent` -> Allocator sizes the signal into an order.
-4. `FillEvent` -> Execution engine simulates realistic exchange fills.
+The engine operates on a strict **Priority Queue**. Components communicate by generating and consuming immutable `Event` objects. Events at the same timestamp are processed in explicit priority order:
+
+| Priority | Event Type | Description |
+|----------|-----------|-------------|
+| 10 | `MarketDataEvent` | Market data updates (`TradeBarEvent`, `OptionDataEvent`, `YieldDataEvent`) |
+| 20 | `SignalEvent` | Strategy generates alpha (Long/Short/Flat) |
+| 30 | `OrderEvent` | Allocator sizes the signal into an order |
+| 40 | `FillEvent` | Execution engine simulates realistic exchange fills |
+| 50 | `LifecycleEvent` | Corporate actions (`OptionExpiryEvent`, `CouponPaymentEvent`) |
 
 ---
 
 ## Directory & File Breakdown
 
-### 1. `core/` (Engine Foundations)
+### 1. `core/` — Engine Foundations
 The central nervous system of the backtester.
-- **`config.py`**: Contains `BacktestConfig` (powered by Pydantic) which holds global settings like starting cash, commissions, and risk limits.
-- **`clock.py`**: Contains `SimulationClock`. 
-  - `advance(next_time)`: Enforces monotonic time. All modules rely on this clock to prevent look-ahead bias.
-- **`engine.py`**: Contains the `BacktestEngine`.
-  - `run()`: The main `while True` loop that pumps data from the feed and routes events from the queue.
-  - `_process_event(event)`: The router that sends `BarEvent` to strategies, `SignalEvent` to allocators, `OrderEvent` to execution, and `FillEvent` to the portfolio.
-- **`recorder.py`**: Contains `EventSerializer`.
-  - Logs every tick, signal, order, and fill during execution and serializes them to a deterministic Parquet file for exact replay.
+- **`config.py`**: `BacktestConfig` (Pydantic) — global settings (cash, commissions, risk limits). Supports environment variable overrides via `BT_` prefix.
+- **`clock.py`**: `SimulationClock` — enforces strict monotonic time. If any event tries to go backwards, the engine raises a fatal error to prevent look-ahead bias.
+- **`engine.py`**: `BacktestEngine` — the main event loop. Pumps data from the feed, routes events to the correct handler, and integrates the `LifecycleHandler` for non-trade events.
+- **`recorder.py`**: `EventSerializer` — logs every tick, signal, order, and fill, then serializes them to a compressed Parquet file for deterministic replay.
 
-### 2. `events/` (Data Structures)
-- **`types.py`**: Defines immutable dataclasses using `kw_only=True` for strict typing.
-  - `BaseEvent`: Base class with timestamp, UUID, and priority sorting logic (`__lt__`).
-  - `MarketDataEvent` hierarchy: `TradeBarEvent`, `OptionDataEvent`, `YieldDataEvent`.
+### 2. `events/` — Data Structures
+- **`types.py`**: Frozen immutable dataclasses (`kw_only=True`).
+  - `BaseEvent`: Base class with timestamp, UUID, and priority sorting (`__lt__`).
+  - `MarketDataEvent` hierarchy: `TradeBarEvent` (OHLCV), `OptionDataEvent` (IV + Greeks), `YieldDataEvent` (YTM + Duration).
   - `LifecycleEvent` hierarchy: `OptionExpiryEvent`, `CouponPaymentEvent`.
-  - Core routing events: `SignalEvent`, `OrderEvent`, `FillEvent`.
-- **`queue.py`**: Contains `SyncEventQueue`.
-  - Wraps Python's built-in `queue.PriorityQueue` to sort events strictly by Time -> Priority -> UUID.
+  - Core routing: `SignalEvent`, `OrderEvent`, `FillEvent`.
+- **`queue.py`**: `SyncEventQueue` — wraps Python's `PriorityQueue`. Sorts by Time → Priority → UUID.
 
-### 3. `pricing/` & `instruments/` (Asset Modeling)
-Stateless representation of tradable assets and their mathematical valuation.
-- **`pricing/base.py`**: Contains `AbstractPricer` and `LinearPricer`.
-- **`pricing/options.py`**: `BlackScholesPricer` (Theoretical option valuation using SciPy).
-- **`pricing/bonds.py`**: `YieldToPricePricer` (Bond pricing math).
-- **`instruments/base.py`**: `Instrument` base class. Uses its assigned `Pricer` to calculate mark-to-market value based on polymorphic market data.
-- **`instruments/equity.py`**: `Equity` class (Linear).
-- **`instruments/option.py`**: `VanillaOption` class (Non-linear).
-- **`instruments/bond.py`**: `FixedRateBond` class (Fixed Income).
+### 3. `pricing/` & `instruments/` — Asset Modeling
+Stateless instruments with pluggable dynamic pricing models.
+- **`pricing/base.py`**: `AbstractPricer` interface + `LinearPricer` (Equities, Futures).
+- **`pricing/options.py`**: `BlackScholesPricer` — European option valuation using `scipy.stats.norm`.
+- **`pricing/bonds.py`**: `YieldToPricePricer` — converts yield data into dirty bond prices via duration/convexity approximation.
+- **`instruments/base.py`**: `Instrument` base class with `get_value(data)` and `pnl_scalar(price_move)`. Also defines the `Decomposable` mixin for synthetic instruments.
+- **`instruments/equity.py`**: `Equity` (linear, 1:1 multiplier).
+- **`instruments/option.py`**: `VanillaOption` (non-linear, Black-Scholes).
+- **`instruments/bond.py`**: `FixedRateBond` (fixed income).
+- **`instruments/stir/`**: `STIROutright`, `STIRSpread`, `STIRFly` — STIR futures with exact tick-size/tick-value math. Spreads and Flies implement `Decomposable` for automatic leg decomposition.
 
-### 4. `data/` (Market Data Integration)
-- **`feed.py`**: 
-  - `AbstractDataFeed`: The interface the engine expects (`next() -> BarEvent`).
-  - `SyntheticFeed`: Generates a realistic random-walk stock chart on the fly using Geometric Brownian Motion (GBM).
-- **`sync.py`**: Contains `MultiSymbolSynchronizer`.
-  - Merges multiple data feeds (e.g., AAPL and MSFT) using a priority queue to emit `BarEvent`s in strict chronological order.
+### 4. `data/` — Market Data Integration
+- **`feed.py`**: `AbstractDataFeed` interface + `SyntheticFeed` (GBM random walk with per-instance RNG).
+- **`sync.py`**: `MultiSymbolSynchronizer` — merges multiple asynchronous data feeds and emits events in strict chronological order.
 
-### 5. `strategy/` (Alpha Generation)
-- **`base.py`**: Contains the `Strategy` base class.
-  - `on_bar()`: Where users write their indicator logic.
-  - `_emit()`: Emits `SignalEvent`s to the queue. Isolates the strategy so it cannot illegally cheat by modifying the portfolio directly.
-- **`warmup.py`**: Contains `WarmupWrapper`.
-  - Decorator that intercepts strategy execution during an initial "burn-in" period, allowing indicators to hydrate without generating orders.
+### 5. `strategy/` — Alpha Generation
+- **`base.py`**: `Strategy` ABC. Users implement `on_bar()` for indicator logic. `_emit()` safely pushes `SignalEvent`s to the queue.
+- **`warmup.py`**: `WarmupWrapper` — per-symbol warmup tracking. Each symbol independently hydrates its indicators before live trading begins.
 
-### 6. `sizing/` (Capital Allocation)
-Converts raw `SignalEvents` into quantified `OrderEvents`.
-- **`base.py`**: Contains `FixedLotSizer` (buys X shares) and `PercentEquitySizer` (allocates X% of account equity per trade).
-- **`vol_target.py`**: Contains `VolTargetSizer`.
-  - `update_price()`: Tracks rolling standard deviation.
-  - `allocate()`: Sizes the order inversely proportional to recent market volatility, ensuring constant risk exposure.
+### 6. `sizing/` — Capital Allocation
+Converts `SignalEvent`s into quantified `OrderEvent`s.
+- **`base.py`**: `FixedLotSizer` and `PercentEquitySizer`.
+- **`vol_target.py`**: `VolTargetSizer` — sizes positions inversely proportional to recent volatility for constant risk exposure.
 
-### 7. `risk/` (Pre and Post Trade Risk)
-Protects the portfolio from invalid states.
-- **`pre_trade.py`**: `PositionLimitCheck` validates an `OrderEvent` before execution. If buying 500 shares exceeds max limits, the order is dropped.
-- **`post_trade.py`**: The `PostTradeRiskEngine` evaluates portfolio health after fills.
-- **`drawdown.py`**: `DrawdownControl` calculates peak-to-trough drops. If a threshold is breached, trading halts.
-- **`budget.py`**: `DailyLossLimit` tracks start-of-day vs end-of-day PnL.
+### 7. `risk/` — Pre & Post Trade Risk
+- **`pre_trade.py`**: `PositionLimitCheck` — blocks orders exceeding position limits before they reach execution.
+- **`post_trade.py`**: `PostTradeRiskEngine` — evaluates portfolio health after every fill.
+- **`drawdown.py`**: `DrawdownControl` — halts trading if peak-to-trough drawdown exceeds threshold.
+- **`budget.py`**: `DailyLossLimit` — tracks intraday PnL limits.
 
-### 8. `execution/` (Market Simulation)
-Simulates realistic exchange interactions.
-- **`slippage.py`**: `VolumeLinearSlippage` punishes large orders by making their fill price worse depending on the market volume participation rate.
-- **`transaction_cost.py`**: `PercentOfValueTCM` and `PerShareTCM` calculate realistic broker commissions.
-- **`oms.py`**: Contains `OrderTracker`.
-  - A stateful Order Management System that tracks `PENDING`, `PARTIAL`, and `FILLED` order states.
-- **`engine.py`**: Contains the `OrderBookMatcher`.
-  - Processes orders against market data. Calculates queue position, limits fills to a maximum percent of bar volume, and generates partial `FillEvent`s.
+### 8. `execution/` — Market Simulation
+Simulates realistic exchange interactions with institutional-grade microstructure.
+- **`slippage.py`**: `VolumeLinearSlippage`, `FixedBasisPointSlippage` — adverse price impact proportional to market participation.
+- **`transaction_cost.py`**: `PercentOfValueTCM`, `PerShareTCM` — realistic broker commissions.
+- **`oms.py`**: `OrderTracker` — stateful Order Management System. Tracks orders through `PENDING` → `ACCEPTED` → `PARTIAL` → `FILLED` lifecycle. Uses `close_order()` to preserve fill status in history.
+- **`engine.py`**: `OrderBookMatcher` — evaluates Market/Limit/Stop orders against bar data. Caps fills at 10% of bar volume to simulate realistic liquidity constraints.
 
-### 9. `portfolio/` (Accounting)
-- **`pnl.py`**: Contains the `AccountModel`.
-  - Advanced portfolio tracking. Manages Cash, Total Equity, and Cost Basis. Handles complex position flipping (Long 2 -> Short 1).
-- **`margin.py`**: Contains `MarginModel` and `EquityMarginModel`.
-  - Tracks Initial Margin and Maintenance Margin requirements continuously to support leveraged strategies safely.
-- **`lifecycle.py`**: Contains `LifecycleHandler`.
-  - Intercepts non-trade events (like `OptionExpiryEvent` or `CouponPaymentEvent`) and automatically exercises options or credits cash.
+### 9. `portfolio/` — Accounting & Clearing
+- **`pnl.py`**: `AccountModel` — manages Cash, Total Equity, Cost Basis, and positions. Handles position flipping and **Synthetic Leg Decomposition** (automatically shatters Fly/Spread fills into outright legs for cross-margining).
+- **`margin.py`**: `MarginModel` + `EquityMarginModel` — tracks Initial and Maintenance Margin requirements.
+- **`lifecycle.py`**: `LifecycleHandler` — intercepts `OptionExpiryEvent` (settles intrinsic value) and `CouponPaymentEvent` (credits interest).
 
-### 10. `analytics/` & `reporting/` (Results)
-- **`analytics/metrics.py`**: Pure math functions (`calculate_returns`, `sharpe_ratio`, `sortino_ratio`, `max_drawdown`).
-- **`reporting/tearsheet.py`**: Contains the `Tearsheet` generator.
-  - `print_stats()`: Prints console metrics.
-  - `plot()`: Uses Plotly to generate an interactive `equity_curve.html` chart.
+### 10. `analytics/` & `reporting/` — Results
+- **`analytics/metrics.py`**: Pure math — `calculate_returns`, `sharpe_ratio`, `sortino_ratio`, `max_drawdown`.
+- **`reporting/tearsheet.py`**: `Tearsheet` — prints console stats and generates interactive `equity_curve.html` via Plotly.
 
 ---
 
 ## How to Run
 
-To run a full end-to-end integration test featuring a Moving Average crossover strategy, synthetic data, volume slippage, percent-equity sizing, and drawdown control:
+### Prerequisites
+```bash
+pip install numpy pandas pyarrow scipy pydantic pydantic-settings plotly pytest
+```
 
-1. Ensure dependencies are installed:
-   ```bash
-   pip install numpy pandas pyarrow scipy pydantic pydantic-settings plotly pytest
-   ```
+### Full Integration Test
+Multi-asset backtest (AAPL + MSFT) with warmup, slippage, partial fills, and drawdown control:
+```bash
+python scripts/smoke_test_full.py
+```
 
-2. Run the full smoke test:
-   ```bash
-   python scripts/smoke_test_full.py
-   ```
+### STIR Legging Test
+Demonstrates buying a Spread, morphing it into a Butterfly, and legging out:
+```bash
+python scripts/smoke_test_legging.py
+```
 
-3. Open the generated `equity_curve.html` file in your browser to view the interactive performance chart.
+### Output
+- `equity_curve.html` — Interactive Plotly chart.
+- `event_log.parquet` — Deterministic event log for replay/debugging.
+
+---
+
+## Documentation
+
+- **`ARCHITECTURE_DEEPDIVE.md`** — Detailed technical walkthrough of every architectural decision. Includes interview Q&A prep.

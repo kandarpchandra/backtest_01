@@ -72,12 +72,12 @@ class BacktestEngine:
         self.clock.advance(event.timestamp)
 
         if event.event_type == EventType.BAR:
-            # Update execution engine to know latest prices for fills
-            self.execution.update_market_bar(event, self.queue)
-            # Update portfolio state to current price
-            self.portfolio.update_market_price(event.symbol, event.close)
+            # Only TradeBarEvents have OHLCV data for execution and portfolio
+            if hasattr(event, 'close'):
+                self.execution.update_market_bar(event, self.queue)
+                self.portfolio.update_market_price(event.symbol, event.close)
             
-            # Pass to strategy
+            # Pass to strategy (strategy decides if it can handle the event type)
             self.strategy.on_bar(event, self.queue)
             
         elif event.event_type == EventType.SIGNAL:

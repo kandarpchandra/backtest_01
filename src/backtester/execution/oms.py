@@ -26,8 +26,17 @@ class OrderTracker:
         return list(self.active_orders.values())
 
     def cancel_order(self, event_id: str) -> None:
-        order = self.active_orders.get(event_id)
-        if order:
-            order.status = OrderStatus.CANCELLED
-            self.closed_orders[event_id] = order
+        """Cancel a pending order."""
+        state = self.active_orders.get(event_id)
+        if state:
+            if state.status not in (OrderStatus.FILLED,):
+                state.status = OrderStatus.CANCELLED
+            self.closed_orders[event_id] = state
+            del self.active_orders[event_id]
+
+    def close_order(self, event_id: str) -> None:
+        """Move a filled order from active to closed, preserving its status."""
+        state = self.active_orders.get(event_id)
+        if state:
+            self.closed_orders[event_id] = state
             del self.active_orders[event_id]
