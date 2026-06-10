@@ -8,20 +8,25 @@ from backtester.core.engine import BacktestEngine
 from backtester.data.feed import SyntheticFeed
 from backtester.instruments.equity import Equity
 from backtester.strategy.base import Strategy
-from backtester.portfolio.position import PositionTracker
-from backtester.execution.fill_model import SimpleExecutionModel
+from backtester.portfolio.pnl import AccountModel
+from backtester.execution.engine import OrderBookMatcher
+from backtester.execution.oms import OrderTracker
+from backtester.sizing.base import FixedLotSizer
 from backtester.events.types import SignalEvent, SignalDirection
 
 class MovingAverageCrossover(Strategy):
     def __init__(self):
         super().__init__("ma_cross")
-        self.prices = []
+        self.prices = {}
 
     def on_bar(self, bar, queue):
-        self.prices.append(bar.close)
-        if len(self.prices) > 10:
-            short_ma = sum(self.prices[-5:]) / 5
-            long_ma = sum(self.prices[-10:]) / 10
+        if bar.symbol not in self.prices:
+            self.prices[bar.symbol] = []
+            
+        self.prices[bar.symbol].append(bar.close)
+        if len(self.prices[bar.symbol]) > 10:
+            short_ma = sum(self.prices[bar.symbol][-5:]) / 5
+            long_ma = sum(self.prices[bar.symbol][-10:]) / 10
             
             # Very simple logic to generate some signals
             if short_ma > long_ma:
@@ -41,21 +46,25 @@ def main():
     
     feed = SyntheticFeed(symbol, start_price=150.0, n_bars=100)
     strategy = MovingAverageCrossover()
-    portfolio = PositionTracker(initial_cash=10000.0, instrument_registry=registry)
-    execution = SimpleExecutionModel(commission_rate=0.0) # Zero commission for testing
+    portfolio = AccountModel(initial_cash=10000.0, instrument_registry=registry)
+    
+    oms = OrderTracker()
+    execution = OrderBookMatcher(oms=oms)
+    allocator = FixedLotSizer(fixed_qty=100.0)
     
     engine.set_feed(feed)
     engine.set_strategy(strategy)
     engine.set_portfolio(portfolio)
     engine.set_execution(execution)
+    engine.set_allocator(allocator)
     
     print("Running backtest...")
     engine.run()
     
     print("Backtest Complete!")
-    print(f"Final Cash: {portfolio.cash:.2f}")
+    print(f"Final Cash: {portfolio.available_cash:.2f}")
     print(f"Final Positions: {portfolio.positions}")
-    print(f"Final Equity: {portfolio.equity_curve[-1] if portfolio.equity_curve else portfolio.cash:.2f}")
+    print(f"Final Equity: {portfolio.total_equity:.2f}")
 
 if __name__ == "__main__":
     main()

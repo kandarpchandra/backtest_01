@@ -20,6 +20,14 @@ class AccountModel:
         
         self.current_prices: Dict[str, float] = {}
         self.equity_curve = []
+        self.equity_curve_timestamps = []
+
+    def record_equity_snapshot(self, timestamp: float) -> None:
+        if not self.equity_curve_timestamps or timestamp > self.equity_curve_timestamps[-1]:
+            self.equity_curve.append(self.total_equity)
+            self.equity_curve_timestamps.append(timestamp)
+        else:
+            self.equity_curve[-1] = self.total_equity
 
     def update_market_price(self, symbol: str, price: float) -> None:
         self.current_prices[symbol] = price
@@ -124,5 +132,3 @@ class AccountModel:
         self.total_equity = portfolio_value
         self.initial_margin_req = im_req
         self.maintenance_margin_req = mm_req
-        
-        self.equity_curve.append(self.total_equity)

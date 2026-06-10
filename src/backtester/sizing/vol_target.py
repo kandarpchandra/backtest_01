@@ -1,6 +1,7 @@
 from backtester.sizing.base import AbstractCapitalAllocator
 from backtester.events.types import SignalEvent, OrderEvent, OrderType, SignalDirection
 from backtester.portfolio.pnl import AccountModel
+import numpy as np
 
 class VolTargetSizer(AbstractCapitalAllocator):
     """

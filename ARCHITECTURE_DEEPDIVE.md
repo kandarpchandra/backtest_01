@@ -399,7 +399,7 @@ Put Price  = K·e^(-rT)·N(-d2) - S·N(-d1)
 Where:
 - `S` = underlying stock price (from `OptionDataEvent.underlying_price`)
 - `K` = strike price
-- `T` = time to expiration in years
+- `T` = time to expiration (dynamically calculated as `max(0, expiry_timestamp - current_timestamp)` to model Theta decay accurately)
 - `r` = risk-free interest rate
 - `σ` = implied volatility (from `OptionDataEvent.iv`)
 - `N()` = cumulative normal distribution (from `scipy.stats.norm.cdf`)
@@ -412,6 +412,7 @@ At expiration (T=0), it returns the intrinsic value: `max(0, S-K)` for calls, `m
 ```
 ΔPrice ≈ -Duration × ΔYTM + 0.5 × Convexity × (ΔYTM)²
 ```
+Where `ΔYTM` is the yield change from the coupon rate (`ytm - coupon_rate`).
 
 ## How Instruments Use Pricers
 
@@ -506,6 +507,8 @@ The `_process_event()` router:
    - `ORDER` → Call `execution.on_order()` which evaluates fills and may put `FillEvent`s in queue.
    - `FILL` → Call `portfolio.on_fill()` to update positions and cash. Run post-trade risk checks.
    - `LIFECYCLE` → Call `lifecycle_handler.process_lifecycle_event()`.
+
+At the end of processing the timestamp, the portfolio records a clean snapshot of the total equity to prevent multiple intraday snapshots from skewing performance metrics.
 
 ---
 

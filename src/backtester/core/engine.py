@@ -101,12 +101,23 @@ class BacktestEngine:
                 decision = self.post_trade_risk.check(self.portfolio)
                 if decision.action == PostTradeAction.FLATTEN_ALL:
                     print(f"Risk Breach: {decision.reason} - Flattening all positions.")
-                    # Simplified flattening: in real engine, would inject flattening orders
-                    self.portfolio.positions.clear()
-                    self.portfolio.available_cash = self.portfolio.equity_curve[-1]
+                    for sym, qty in list(self.portfolio.positions.items()):
+                        if qty != 0:
+                            direction = SignalDirection.SHORT if qty > 0 else SignalDirection.LONG
+                            order = OrderEvent(
+                                timestamp=event.timestamp,
+                                symbol=sym,
+                                direction=direction,
+                                quantity=abs(qty),
+                                order_type=OrderType.MARKET
+                            )
+                            self.queue.put(order)
                 elif decision.action == PostTradeAction.HALT_TRADING:
                     raise RuntimeError(f"Risk Breach: {decision.reason} - Trading Halted.")
                     
         elif event.event_type == EventType.LIFECYCLE:
             if self.lifecycle_handler:
                 self.lifecycle_handler.process_lifecycle_event(event)
+
+        if self.portfolio:
+            self.portfolio.record_equity_snapshot(event.timestamp)

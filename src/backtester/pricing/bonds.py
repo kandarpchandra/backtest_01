@@ -16,7 +16,8 @@ class YieldToPricePricer(AbstractPricer):
             
         # Simplified continuous duration pricing for MVP
         # In reality, this requires full cash-flow discounting over remaining periods
-        price_change_pct = -data.duration * data.ytm + 0.5 * data.convexity * (data.ytm ** 2)
+        dy = data.ytm - self.coupon_rate
+        price_change_pct = -data.duration * dy + 0.5 * data.convexity * (dy ** 2)
         
         # Approximate price
         return float(self.face_value * (1 + price_change_pct))

@@ -7,9 +7,9 @@ class BlackScholesPricer(AbstractPricer):
     """
     Theoretical Black-Scholes pricing model for European options.
     """
-    def __init__(self, strike: float, expiry_years: float, is_call: bool, risk_free_rate: float = 0.0):
+    def __init__(self, strike: float, expiry_timestamp: float, is_call: bool, risk_free_rate: float = 0.0):
         self.strike = strike
-        self.expiry_years = expiry_years
+        self.expiry_timestamp = expiry_timestamp
         self.is_call = is_call
         self.r = risk_free_rate
 
@@ -19,7 +19,9 @@ class BlackScholesPricer(AbstractPricer):
             
         S = data.underlying_price
         K = self.strike
-        T = self.expiry_years
+        # Assuming timestamps are in years for this standard BS setup
+        # For a production system using Unix timestamps, we would divide by (365.25 * 24 * 3600)
+        T = max(0.0, self.expiry_timestamp - data.timestamp)
         r = self.r
         sigma = data.iv
         

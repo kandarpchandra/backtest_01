@@ -78,7 +78,7 @@ Converts `SignalEvent`s into quantified `OrderEvent`s.
 
 ### 8. `execution/` — Market Simulation
 Simulates realistic exchange interactions with institutional-grade microstructure.
-- **`slippage.py`**: `VolumeLinearSlippage`, `FixedBasisPointSlippage` — adverse price impact proportional to market participation.
+- **`slippage.py`**: `VolumeLinearSlippage`, `FixedBasisPointSlippage` — adverse price impact proportional to market participation. Slippage is accurately calculated on the filled quantity, not the total order quantity.
 - **`transaction_cost.py`**: `PercentOfValueTCM`, `PerShareTCM` — realistic broker commissions.
 - **`oms.py`**: `OrderTracker` — stateful Order Management System. Tracks orders through `PENDING` → `ACCEPTED` → `PARTIAL` → `FILLED` lifecycle. Uses `close_order()` to preserve fill status in history.
 - **`engine.py`**: `OrderBookMatcher` — evaluates Market/Limit/Stop orders against bar data. Caps fills at 10% of bar volume to simulate realistic liquidity constraints.

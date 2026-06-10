@@ -26,31 +26,35 @@ from backtester.reporting.tearsheet import Tearsheet
 class MovingAverageCrossover(Strategy):
     def __init__(self):
         super().__init__("ma_cross")
-        self.prices = []
-        self.in_position = False
+        self.prices = {}
+        self.in_position = {}
 
     def on_bar(self, bar, queue):
-        self.prices.append(bar.close)
-        if len(self.prices) > 20:
-            short_ma = sum(self.prices[-10:]) / 10
-            long_ma = sum(self.prices[-20:]) / 20
+        if bar.symbol not in self.prices:
+            self.prices[bar.symbol] = []
+            self.in_position[bar.symbol] = False
             
-            if short_ma > long_ma and not self.in_position:
+        self.prices[bar.symbol].append(bar.close)
+        if len(self.prices[bar.symbol]) > 20:
+            short_ma = sum(self.prices[bar.symbol][-10:]) / 10
+            long_ma = sum(self.prices[bar.symbol][-20:]) / 20
+            
+            if short_ma > long_ma and not self.in_position[bar.symbol]:
                 self._emit(SignalEvent(
                     timestamp=bar.timestamp,
                     symbol=bar.symbol,
                     direction=SignalDirection.LONG,
                     strategy_id=self.strategy_id
                 ), queue)
-                self.in_position = True
-            elif short_ma < long_ma and self.in_position:
+                self.in_position[bar.symbol] = True
+            elif short_ma < long_ma and self.in_position[bar.symbol]:
                 self._emit(SignalEvent(
                     timestamp=bar.timestamp,
                     symbol=bar.symbol,
                     direction=SignalDirection.FLAT, # Close position
                     strategy_id=self.strategy_id
                 ), queue)
-                self.in_position = False
+                self.in_position[bar.symbol] = False
 
 def main():
     print("Setting up FULL Backtest Engine...")

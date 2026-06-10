@@ -1,6 +1,6 @@
 import pytest
 from backtester.core.clock import SimulationClock
-from backtester.events.types import BarEvent, SignalEvent, SignalDirection, OrderEvent
+from backtester.events.types import TradeBarEvent, SignalEvent, SignalDirection, OrderEvent
 from backtester.events.queue import SyncEventQueue
 
 def test_simulation_clock():
@@ -18,7 +18,7 @@ def test_event_queue_priority():
     
     # Create events out of order but with same timestamp
     signal = SignalEvent(timestamp=1.0, symbol="AAPL", direction=SignalDirection.LONG, strategy_id="test")
-    bar = BarEvent(timestamp=1.0, symbol="AAPL", open=100, high=101, low=99, close=100, volume=100)
+    bar = TradeBarEvent(timestamp=1.0, symbol="AAPL", open=100, high=101, low=99, close=100, volume=100)
     order = OrderEvent(timestamp=1.0, symbol="AAPL", direction=SignalDirection.LONG, quantity=1.0)
     
     queue.put(order)
@@ -27,7 +27,7 @@ def test_event_queue_priority():
     
     # Priority should be BAR -> SIGNAL -> ORDER based on enum value
     first = queue.get()
-    assert isinstance(first, BarEvent)
+    assert isinstance(first, TradeBarEvent)
     
     second = queue.get()
     assert isinstance(second, SignalEvent)

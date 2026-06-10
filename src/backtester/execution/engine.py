@@ -67,7 +67,7 @@ class OrderBookMatcher:
             return
 
         # Calculate slippage & commissions on the partial fill
-        slippage = self.slippage_model.calculate_slippage(order, base_fill_price, bar.volume)
+        slippage = self.slippage_model.calculate_slippage(order, base_fill_price, bar.volume, fill_qty)
         actual_price = base_fill_price + slippage
         commission = self.tcm.calculate_commission(fill_qty, actual_price)
 
