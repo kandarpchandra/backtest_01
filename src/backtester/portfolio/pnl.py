@@ -44,20 +44,22 @@ class AccountModel:
         instrument = self.instrument_registry.get(symbol)
         
         if isinstance(instrument, Decomposable):
-            self.available_cash -= qty * price # Deduct synthetic cash
+            # Use instrument-aware cash impact for the synthetic
+            self.available_cash -= instrument.cash_impact(qty, price)
             legs = instrument.decompose(qty)
+            n_legs = len(legs)
             
-            for i, (leg_sym, leg_qty) in enumerate(legs.items()):
-                # Assign the entire synthetic cost basis to the first leg for MVP simplicity
-                leg_price = price if i == 0 else 0.0
+            for leg_sym, leg_qty in legs.items():
+                # Distribute the synthetic price proportionally across legs
+                # Each leg gets the synthetic price as its cost basis reference
                 leg_instrument = self.instrument_registry.get(leg_sym)
-                self._update_position(leg_sym, leg_qty, leg_price, leg_instrument)
+                self._update_position(leg_sym, leg_qty, price / n_legs if n_legs > 0 else 0.0, leg_instrument)
                 
             self._recalculate_account()
             return
             
-        # Basic cash accounting for non-decomposable
-        self.available_cash -= qty * price
+        # Instrument-aware cash accounting
+        self.available_cash -= instrument.cash_impact(qty, price) if instrument else qty * price
         self._update_position(symbol, qty, price, instrument)
         self._recalculate_account()
 
@@ -100,34 +102,27 @@ class AccountModel:
                     self.cost_basis.pop(symbol, None)
 
     def _recalculate_account(self) -> None:
-        unrealized_pnl = 0.0
         im_req = 0.0
         mm_req = 0.0
         
+        # Instrument-aware portfolio valuation
+        portfolio_value = self.available_cash
         for symbol, qty in self.positions.items():
             price = self.current_prices.get(symbol, 0.0)
+            cb = self.cost_basis.get(symbol, price)
             instrument = self.instrument_registry.get(symbol)
             if instrument:
-                # PnL
-                cb = self.cost_basis.get(symbol, price)
-                price_diff = price - cb if qty > 0 else cb - price
-                unrealized_pnl += instrument.pnl_scalar(price_diff) * abs(qty)
+                # Each instrument knows how to value its own position
+                # Equities: qty * price (standard model)
+                # Futures: unrealized variation margin PnL
+                portfolio_value += instrument.position_value(qty, price, cb)
                 
                 # Margin
                 im_req += self.margin_model.get_initial_margin(symbol, qty, price, instrument)
                 mm_req += self.margin_model.get_maintenance_margin(symbol, qty, price, instrument)
-
-        # In a real system with futures, available cash doesn't necessarily track total equity 1:1,
-        # but for this MVP, Total Equity = Cash Balance + Unrealized PnL
-        # where Cash Balance = Initial Deposit - Commissions + Realized PnL - (qty*price for equities)
-        
-        # Actually, for equities: Total Equity = Cash + Position Value
-        # But we've been subtracting qty*price from cash.
-        # Let's keep it simple:
-        portfolio_value = self.available_cash
-        for symbol, qty in self.positions.items():
-            price = self.current_prices.get(symbol, 0.0)
-            portfolio_value += qty * price # Standard equity model
+            else:
+                # Fallback: equity model for unknown instruments
+                portfolio_value += qty * price
 
         self.total_equity = portfolio_value
         self.initial_margin_req = im_req

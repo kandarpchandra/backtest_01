@@ -8,10 +8,12 @@ class OrderBookMatcher:
     def __init__(self, 
                  oms: OrderTracker,
                  slippage_model: AbstractSlippageModel = ZeroSlippage(),
-                 tcm: AbstractTransactionCostModel = ZeroTCM()):
+                 tcm: AbstractTransactionCostModel = ZeroTCM(),
+                 volume_participation_limit: float = 0.10):
         self.oms = oms
         self.slippage_model = slippage_model
         self.tcm = tcm
+        self.volume_participation_limit = volume_participation_limit
         self.current_bars = {}
 
     def update_market_bar(self, bar: TradeBarEvent, queue: AbstractEventQueue) -> None:
@@ -23,14 +25,10 @@ class OrderBookMatcher:
                 self._evaluate_order_state(state, bar, queue)
 
     def on_order(self, order: OrderEvent, queue: AbstractEventQueue) -> None:
-        """New order arrived from the queue."""
+        """New order arrived from the queue. Stored in OMS; evaluated on the NEXT bar."""
         self.oms.submit_order(order)
-        # Attempt immediate fill if we have market data
-        bar = self.current_bars.get(order.symbol)
-        if bar:
-            state = self.oms.active_orders.get(order.event_id)
-            if state:
-                self._evaluate_order_state(state, bar, queue)
+        # Orders are NOT immediately filled. They are evaluated on the next
+        # call to update_market_bar() to prevent same-bar look-ahead bias.
 
     def _evaluate_order_state(self, state: 'OrderState', bar: TradeBarEvent, queue: AbstractEventQueue) -> None:
         if state.status not in (OrderStatus.ACCEPTED, OrderStatus.PARTIAL):
@@ -58,8 +56,8 @@ class OrderBookMatcher:
             base_fill_price = order.price
 
         # Simulate Queue / Partial Fills
-        # A simple model: you can only fill up to 10% of the bar's volume
-        available_volume = bar.volume * 0.10
+        # A simple model: you can only fill up to `volume_participation_limit` of the bar's volume
+        available_volume = bar.volume * self.volume_participation_limit
         remaining_qty = order.quantity - state.filled_quantity
         
         fill_qty = min(remaining_qty, available_volume)

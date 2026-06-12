@@ -3,6 +3,9 @@ from backtester.events.types import LifecycleEvent, OptionExpiryEvent, CouponPay
 from backtester.portfolio.pnl import AccountModel
 from backtester.instruments.option import VanillaOption
 from backtester.instruments.bond import FixedRateBond
+import logging
+
+logger = logging.getLogger(__name__)
 
 class LifecycleHandler:
     """
@@ -45,12 +48,12 @@ class LifecycleHandler:
             # We were short, we pay intrinsic value
             self.portfolio.available_cash -= settlement_cash
             
-        # Remove the option position
-        del self.portfolio.positions[event.symbol]
+        # Remove the option position safely
+        self.portfolio.positions.pop(event.symbol, None)
         self.portfolio.cost_basis.pop(event.symbol, None)
-        print(f"LIFECYCLE: Option {event.symbol} expired. Cash settled: {settlement_cash if qty > 0 else -settlement_cash}")
+        logger.info(f"LIFECYCLE: Option {event.symbol} expired. Cash settled: {settlement_cash if qty > 0 else -settlement_cash}")
 
     def _handle_coupon_payment(self, event: CouponPaymentEvent, qty: float) -> None:
         payment = event.coupon_amount * abs(qty)
         self.portfolio.available_cash += payment
-        print(f"LIFECYCLE: Received coupon payment of {payment} for bond {event.symbol}")
+        logger.info(f"LIFECYCLE: Received coupon payment of {payment} for bond {event.symbol}")

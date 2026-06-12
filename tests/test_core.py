@@ -1,6 +1,6 @@
 import pytest
 from backtester.core.clock import SimulationClock
-from backtester.events.types import TradeBarEvent, SignalEvent, SignalDirection, OrderEvent
+from backtester.events.types import TradeBarEvent, SignalEvent, SignalDirection, OrderEvent, EventType, BaseEvent
 from backtester.events.queue import SyncEventQueue
 
 def test_simulation_clock():

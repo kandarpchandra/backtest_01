@@ -22,6 +22,9 @@ class WarmupWrapper(Strategy):
         if self._bars_per_symbol[symbol] <= self.warmup_bars:
             # Hydrate strategy, but trap any emitted SignalEvents in a dummy queue
             self.strategy.on_bar(bar, self._dummy_queue)
+            # Clear the dummy queue to prevent memory leak (P3-2)
+            while not self._dummy_queue.empty():
+                self._dummy_queue.get()
         else:
             # Warmup complete for this symbol, allow signals to flow
             self.strategy.on_bar(bar, queue)

@@ -1,6 +1,6 @@
 from backtester.core.clock import SimulationClock
 from backtester.events.queue import AbstractEventQueue, SyncEventQueue
-from backtester.events.types import BaseEvent, EventType, OrderEvent
+from backtester.events.types import BaseEvent, EventType, OrderEvent, TradeBarEvent, SignalDirection, OrderType
 from backtester.sizing.base import AbstractCapitalAllocator
 from backtester.risk.pre_trade import PreTradeRiskEngine
 from backtester.risk.post_trade import PostTradeRiskEngine, PostTradeAction
@@ -9,6 +9,9 @@ from backtester.execution.engine import OrderBookMatcher
 from backtester.core.recorder import EventSerializer
 from backtester.core.config import BacktestConfig
 from backtester.portfolio.lifecycle import LifecycleHandler
+import logging
+
+logger = logging.getLogger(__name__)
 
 class BacktestEngine:
     def __init__(self, config: BacktestConfig = BacktestConfig()):
@@ -53,6 +56,8 @@ class BacktestEngine:
         if not all([self.data_feed, self.strategy, self.portfolio, self.execution, self.allocator]):
             raise ValueError("Must set feed, strategy, portfolio, execution, and allocator before running.")
 
+        self._current_day: int = -1  # Track day boundary for DailyLossLimit
+
         while True:
             # 1. Pump data feed if queue is empty
             if self.queue.empty():
@@ -71,9 +76,16 @@ class BacktestEngine:
         # Advance simulation time safely
         self.clock.advance(event.timestamp)
 
+        # Detect day boundary for DailyLossLimit
+        event_day = int(event.timestamp)
+        if event_day > self._current_day:
+            self._current_day = event_day
+            if self.post_trade_risk and self.post_trade_risk.daily_loss_limit and self.portfolio:
+                self.post_trade_risk.daily_loss_limit.start_day(self.portfolio)
+
         if event.event_type == EventType.BAR:
             # Only TradeBarEvents have OHLCV data for execution and portfolio
-            if hasattr(event, 'close'):
+            if isinstance(event, TradeBarEvent):
                 self.execution.update_market_bar(event, self.queue)
                 self.portfolio.update_market_price(event.symbol, event.close)
             
@@ -100,7 +112,7 @@ class BacktestEngine:
             if self.post_trade_risk:
                 decision = self.post_trade_risk.check(self.portfolio)
                 if decision.action == PostTradeAction.FLATTEN_ALL:
-                    print(f"Risk Breach: {decision.reason} - Flattening all positions.")
+                    logger.warning(f"Risk Breach: {decision.reason} - Flattening all positions.")
                     for sym, qty in list(self.portfolio.positions.items()):
                         if qty != 0:
                             direction = SignalDirection.SHORT if qty > 0 else SignalDirection.LONG

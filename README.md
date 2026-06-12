@@ -36,11 +36,11 @@ The central nervous system of the backtester.
 - **`config.py`**: `BacktestConfig` (Pydantic) — global settings (cash, commissions, risk limits). Supports environment variable overrides via `BT_` prefix.
 - **`clock.py`**: `SimulationClock` — enforces strict monotonic time. If any event tries to go backwards, the engine raises a fatal error to prevent look-ahead bias.
 - **`engine.py`**: `BacktestEngine` — the main event loop. Pumps data from the feed, routes events to the correct handler, and integrates the `LifecycleHandler` for non-trade events.
-- **`recorder.py`**: `EventSerializer` — logs every tick, signal, order, and fill, then serializes them to a compressed Parquet file for deterministic replay.
+- **`recorder.py`**: `EventSerializer` — logs every tick, signal, order, and fill, and flushes them to disk in chunks to prevent memory explosion on large datasets.
 
 ### 2. `events/` — Data Structures
 - **`types.py`**: Frozen immutable dataclasses (`kw_only=True`).
-  - `BaseEvent`: Base class with timestamp, UUID, and priority sorting (`__lt__`).
+  - `BaseEvent`: Base class with timestamp, deterministic monotonic `event_id`, and priority sorting (`__lt__`).
   - `MarketDataEvent` hierarchy: `TradeBarEvent` (OHLCV), `OptionDataEvent` (IV + Greeks), `YieldDataEvent` (YTM + Duration).
   - `LifecycleEvent` hierarchy: `OptionExpiryEvent`, `CouponPaymentEvent`.
   - Core routing: `SignalEvent`, `OrderEvent`, `FillEvent`.
@@ -81,10 +81,10 @@ Simulates realistic exchange interactions with institutional-grade microstructur
 - **`slippage.py`**: `VolumeLinearSlippage`, `FixedBasisPointSlippage` — adverse price impact proportional to market participation. Slippage is accurately calculated on the filled quantity, not the total order quantity.
 - **`transaction_cost.py`**: `PercentOfValueTCM`, `PerShareTCM` — realistic broker commissions.
 - **`oms.py`**: `OrderTracker` — stateful Order Management System. Tracks orders through `PENDING` → `ACCEPTED` → `PARTIAL` → `FILLED` lifecycle. Uses `close_order()` to preserve fill status in history.
-- **`engine.py`**: `OrderBookMatcher` — evaluates Market/Limit/Stop orders against bar data. Caps fills at 10% of bar volume to simulate realistic liquidity constraints.
+- **`engine.py`**: `OrderBookMatcher` — evaluates Market/Limit/Stop orders on the *subsequent* bar to prevent look-ahead bias. Caps fills at a configurable percentage of bar volume to simulate realistic liquidity constraints.
 
 ### 9. `portfolio/` — Accounting & Clearing
-- **`pnl.py`**: `AccountModel` — manages Cash, Total Equity, Cost Basis, and positions. Handles position flipping and **Synthetic Leg Decomposition** (automatically shatters Fly/Spread fills into outright legs for cross-margining).
+- **`pnl.py`**: `AccountModel` — manages Cash, Total Equity, Cost Basis, and positions. Implements instrument-aware valuation (e.g., futures contribute via variation margin rather than full cash notional) and **Synthetic Leg Decomposition** (automatically shatters Fly/Spread fills into outright legs for cross-margining).
 - **`margin.py`**: `MarginModel` + `EquityMarginModel` — tracks Initial and Maintenance Margin requirements.
 - **`lifecycle.py`**: `LifecycleHandler` — intercepts `OptionExpiryEvent` (settles intrinsic value) and `CouponPaymentEvent` (credits interest).
 

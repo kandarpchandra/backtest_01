@@ -20,6 +20,22 @@ class Instrument(ABC):
         """
         return price_move
 
+    def position_value(self, qty: float, current_price: float, cost_basis: float) -> float:
+        """
+        Returns the contribution of this position to total portfolio equity.
+        Equities: qty * current_price (standard equity model).
+        Futures: unrealized variation margin PnL (overridden by subclasses).
+        """
+        return qty * current_price
+
+    def cash_impact(self, qty: float, price: float) -> float:
+        """
+        Returns the cash impact of opening/adding to a position.
+        Equities: deduct full notional (qty * price).
+        Futures: deduct zero (margin is tracked separately). Overridden by subclasses.
+        """
+        return qty * price
+
 class Decomposable(ABC):
     """
     Mixin interface for complex instruments that can be shattered into outright legs.

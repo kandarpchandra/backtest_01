@@ -1,6 +1,9 @@
 from dataclasses import dataclass, field
 from enum import Enum, auto
-import uuid
+import itertools
+
+# Module-level monotonic counter for deterministic event ordering
+_event_counter = itertools.count()
 
 class EventType(Enum):
     """Explicit priority values. Lower = processed first at the same timestamp."""
@@ -13,7 +16,7 @@ class EventType(Enum):
 @dataclass(frozen=True, kw_only=True)
 class BaseEvent:
     timestamp: float
-    event_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    event_id: str = field(default_factory=lambda: f"{next(_event_counter):012d}")
     
     @property
     def event_type(self) -> EventType:

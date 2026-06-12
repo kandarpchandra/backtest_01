@@ -24,11 +24,18 @@ class PostTradeRiskEngine:
     def set_daily_loss_limit(self, dll):
         self.daily_loss_limit = dll
 
+    def set_margin_enforcement(self, enforce: bool = True):
+        self.enforce_margin = enforce
+
     def check(self, portfolio: AccountModel) -> RiskDecision:
         if self.drawdown_control and not self.drawdown_control.check(portfolio):
             return RiskDecision(action=PostTradeAction.FLATTEN_ALL, reason="Max drawdown breached")
             
         if self.daily_loss_limit and not self.daily_loss_limit.check(portfolio):
             return RiskDecision(action=PostTradeAction.FLATTEN_ALL, reason="Daily loss limit breached")
+            
+        if getattr(self, 'enforce_margin', False):
+            if portfolio.total_equity < portfolio.maintenance_margin_req:
+                return RiskDecision(action=PostTradeAction.FLATTEN_ALL, reason="Maintenance margin call")
             
         return RiskDecision(action=PostTradeAction.CONTINUE)

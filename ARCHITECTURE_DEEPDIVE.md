@@ -42,7 +42,7 @@ Each of those steps is an **Event**. Our engine models this exact flow. Each ste
 
 Every piece of communication in the engine is an **Event**. An Event is a small, immutable (cannot be changed after creation) data packet. It contains:
 - **`timestamp`**: When this event happened (a float representing seconds).
-- **`event_id`**: A unique UUID so no two events are ever confused.
+- **`event_id`**: A unique deterministic monotonic counter so no two events are ever confused, and runs are 100% reproducible.
 - **`event_type`**: What kind of event this is (BAR, SIGNAL, ORDER, FILL, LIFECYCLE).
 
 ### File: `src/backtester/events/types.py`
@@ -253,13 +253,13 @@ This is where the engine gets truly institutional-grade.
 **`OrderBookMatcher`** — The heart of execution. On every new bar, it:
 
 1. **Updates its internal market data** (`current_bars[symbol] = bar`).
-2. **Scans all active orders** for that symbol.
+2. **Scans all active orders** for that symbol. Orders are queued and ONLY evaluated against the *subsequent* bar after they are generated. This completely eliminates **look-ahead bias** (an order cannot fill on the exact same bar that triggered its signal).
 3. **Evaluates each order** against the bar:
    - **MARKET orders**: Fill at the bar's close price.
    - **LIMIT orders**: For a buy, fill only if the bar's low reached the limit price. For a sell, fill only if the bar's high reached the limit price.
    - **STOP orders**: For a buy-stop, trigger only if the bar's high reached the stop price. For a sell-stop, trigger only if the bar's low reached the stop price.
 
-4. **Simulates partial fills**: You can only fill up to 10% of the bar's traded volume. If you want to buy 5,000 shares but only 1,000 traded, you get filled for 100 shares (10% of 1,000). The rest stays as a PARTIAL order and tries again on the next bar.
+4. **Simulates partial fills**: You can only fill up to a configurable percentage of the bar's traded volume (default 10%). If you want to buy 5,000 shares but only 1,000 traded, you get filled for 100 shares (10% of 1,000). The rest stays as a PARTIAL order and tries again on the next bar.
 
 5. **Applies slippage**: The fill price is adjusted adversely based on your market participation rate.
 
@@ -337,7 +337,10 @@ Three scenarios:
 
 **Step 4: Recalculate Account**
 ```python
-portfolio_value = available_cash + sum(qty × current_price for each position)
+# The portfolio calls the polymorphic `position_value()` and `cash_impact()` 
+# methods on each instrument. This correctly handles Equities (qty * price) vs 
+# Futures (which contribute to equity purely through variation margin, rather 
+# than erroneously deducting the full contract notional from cash).
 ```
 
 ## Margin Tracking
@@ -531,7 +534,7 @@ Pure mathematical functions (no side effects):
 
 ### File: `src/backtester/core/recorder.py`
 
-**`EventSerializer`** — Records every single event during the backtest. At the end, saves them as a compressed Parquet file. This allows you to:
+**`EventSerializer`** — Records every single event during the backtest. It flushes events to disk in chunks to prevent memory explosion on large tick-level datasets. At the end, it ensures everything is serialized to a compressed Parquet file. This allows you to:
 1. **Replay** the exact sequence of events for debugging.
 2. **Analyze** individual strategy performance by filtering events by `strategy_id`.
 3. **Audit** every decision the engine made.
@@ -687,10 +690,10 @@ The equity curve is plotted and saved as `equity_curve.html`.
 # PART 15: INTERVIEW Q&A CHEAT SHEET
 
 **Q: "How do you prevent look-ahead bias?"**
-> "The SimulationClock enforces strict monotonic time. The strategy receives data one bar at a time via the event queue. Future data physically doesn't exist in the system yet — the data feed hasn't yielded it. If any component tries to process an event from the past, the clock raises a fatal ValueError."
+> "The SimulationClock enforces strict monotonic time. The strategy receives data one bar at a time via the event queue. Future data physically doesn't exist in the system yet. Furthermore, the Execution Engine queues incoming orders and ONLY evaluates them against the *next* subsequent market data bar. This guarantees an order cannot instantly execute on the closing price of the bar that triggered it."
 
 **Q: "How do you handle partial fills?"**
-> "The OrderBookMatcher limits fills to 10% of the bar's traded volume. If your order is larger, only a fraction fills, the OrderState is set to PARTIAL, and the remaining quantity tries again on the next bar. This prevents the backtester from assuming infinite liquidity."
+> "The OrderBookMatcher limits fills to a configurable percentage of the bar's traded volume (default 10%). If your order is larger, only a fraction fills, the OrderState is set to PARTIAL, and the remaining quantity tries again on the next bar. This prevents the backtester from assuming infinite liquidity."
 
 **Q: "What happens if a strategy buys a Butterfly spread and then sells one leg?"**
 > "The portfolio acts as a clearinghouse. When a Butterfly fill arrives, the AccountModel checks if the instrument is Decomposable. If so, it calls decompose() to shatter the spread into its three outright futures legs (+1 front, -2 mid, +1 back) and books them individually. From that point, each leg can be traded independently."

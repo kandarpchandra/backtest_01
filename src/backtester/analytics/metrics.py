@@ -9,11 +9,13 @@ def calculate_returns(equity_curve: list[float]) -> np.ndarray:
 def sharpe_ratio(returns: np.ndarray, risk_free_rate: float = 0.0, periods: int = 252) -> float:
     if len(returns) == 0:
         return 0.0
-    mean_return = np.mean(returns)
-    std_return = np.std(returns)
+    per_period_rfr = risk_free_rate / periods
+    excess_returns = returns - per_period_rfr
+    mean_excess = np.mean(excess_returns)
+    std_return = np.std(returns, ddof=1)
     if std_return == 0:
         return 0.0
-    return (mean_return - risk_free_rate) / std_return * np.sqrt(periods)
+    return (mean_excess / std_return) * np.sqrt(periods)
 
 def max_drawdown(equity_curve: list[float]) -> float:
     if not equity_curve:
@@ -26,11 +28,12 @@ def max_drawdown(equity_curve: list[float]) -> float:
 def sortino_ratio(returns: np.ndarray, risk_free_rate: float = 0.0, periods: int = 252) -> float:
     if len(returns) == 0:
         return 0.0
-    downside_returns = returns[returns < 0]
-    if len(downside_returns) == 0:
-        return float('inf') # Infinite sortino if no downside
-    downside_std = np.std(downside_returns)
-    mean_return = np.mean(returns)
-    if downside_std == 0:
+    per_period_rfr = risk_free_rate / periods
+    mean_excess = np.mean(returns) - per_period_rfr
+    # Proper downside deviation: RMS of all observations below target
+    downside = np.minimum(returns - per_period_rfr, 0.0)
+    downside_dev = np.sqrt(np.mean(downside ** 2))
+    if downside_dev == 0:
         return float('inf')
-    return (mean_return - risk_free_rate) / downside_std * np.sqrt(periods)
+    return (mean_excess / downside_dev) * np.sqrt(periods)
+

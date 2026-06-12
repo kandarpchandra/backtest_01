@@ -99,15 +99,21 @@ def main():
     print("Running backtest...")
     engine.run()
     
-    print("\nSaving Event Log to Parquet...")
-    engine.recorder.save(str(Path(__file__).parent.parent / "event_log.parquet"))
+    results_dir = Path(__file__).parent.parent / "results"
+    results_dir.mkdir(exist_ok=True)
+    
+    print(f"\nSaving Event Log to Parquet in {results_dir}...")
+    engine.recorder.save(str(results_dir / "event_log.parquet"))
     
     print("\nGenerating Tearsheet...")
     tearsheet = Tearsheet(portfolio)
     tearsheet.print_stats()
     
-    plot_path = str(Path(__file__).parent.parent / "equity_curve.html")
+    plot_path = str(results_dir / "equity_curve.html")
     tearsheet.plot(save_path=plot_path)
+    
+    # Export metrics and equity.csv
+    tearsheet.export(str(results_dir))
 
 if __name__ == "__main__":
     main()

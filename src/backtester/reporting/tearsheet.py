@@ -46,3 +46,24 @@ class Tearsheet:
         else:
             # We don't try to pop up a browser in backtests blindly
             pass
+
+    def export(self, directory: str):
+        import json
+        import pandas as pd
+        from pathlib import Path
+
+        dir_path = Path(directory)
+        dir_path.mkdir(parents=True, exist_ok=True)
+
+        # Export Metrics
+        stats = self.generate_stats()
+        with open(dir_path / "metrics.json", "w") as f:
+            json.dump(stats, f, indent=4)
+
+        # Export Equity Curve
+        if self.equity_curve:
+            timestamps = self.portfolio.equity_curve_timestamps if self.portfolio.equity_curve_timestamps else list(range(len(self.equity_curve)))
+            df = pd.DataFrame({"timestamp": timestamps, "equity": self.equity_curve})
+            df.to_csv(dir_path / "equity.csv", index=False)
+            
+        print(f"Exported metrics and equity curve to {dir_path}")

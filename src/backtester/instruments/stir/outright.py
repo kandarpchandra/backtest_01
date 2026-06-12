@@ -19,6 +19,21 @@ class STIROutright(Instrument):
         """
         return self.pnl_scalar(0.01)
 
+    def position_value(self, qty: float, current_price: float, cost_basis: float) -> float:
+        """
+        Futures position value = unrealized variation margin PnL.
+        NOT qty * price (which is meaningless for futures).
+        """
+        price_diff = current_price - cost_basis if qty > 0 else cost_basis - current_price
+        return self.pnl_scalar(price_diff) * abs(qty)
+
+    def cash_impact(self, qty: float, price: float) -> float:
+        """
+        Futures do not deduct notional from cash. Only margin is required.
+        For MVP, we return 0 and handle margin separately.
+        """
+        return 0.0
+
 # Factory helpers for common STIR contracts
 def make_euribor(symbol: str) -> STIROutright:
     # ICE Euribor: 0.005 tick size = €12.50 tick value (frontend)

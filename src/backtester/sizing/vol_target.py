@@ -43,7 +43,7 @@ class VolTargetSizer(AbstractCapitalAllocator):
         returns = np.diff(prices) / prices[:-1]
         
         # Annualized realized volatility
-        realized_vol = np.std(returns) * np.sqrt(252)
+        realized_vol = np.std(returns, ddof=1) * np.sqrt(252)
         
         if realized_vol <= 0.0001:
             return None
