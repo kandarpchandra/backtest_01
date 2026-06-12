@@ -1,0 +1,28 @@
+What is MISSING (The "Session 5" Advanced Features)
+
+1. Data & Universe Management Layer
+
+UniverseManager (dynamically listing/delisting instruments, rather than hardcoding them)
+ContractRollManager (handling futures back-adjustments)
+MarketCalendar (exchange holiday awareness)
+
+
+2. Sizing & Portfolio Construction
+
+KellySizer (optimal bet sizing algorithm)
+RiskParitySizer (balancing risk equally across all held assets)
+CorrelationMonitor (preventing overexposure to highly correlated assets)
+
+
+3. Advanced Execution & Microstructure
+
+MarketMicrostructureModel (bid-ask bounce, adverse selection models)
+LatencyModel (simulating network and exchange latency)
+VenueAdapter (routing orders to different simulated exchanges)
+
+
+4. Advanced Analytics
+
+AttributionEngine (breaking down alpha vs beta, Brinson attribution)
+BootstrapCI (confidence intervals to prove Sharpe isn't just luck)
+CapacityEstimation (how much money the strategy can trade before ruining its own edge)
